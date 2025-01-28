@@ -1,0 +1,2 @@
+CUDA_VISIBLE_DEVICES=4,5,6,7
+/blue/ruogu.fang/jiaqing.zhang/my_conda/.conda/envs/yolov5/bin/python main.py --name NHATS_new --dset_dir /blue/parisa.rashidi/jiaqing.zhang/BYOL_AI_Fairness/ClassificationData/NHATS --dataset NHATS --max_iter 1e5 --batch_size 128
