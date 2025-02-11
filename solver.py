@@ -93,8 +93,8 @@ class Solver(object):
     def train(self):
         self.net_mode(train=True)
 
-        ones = torch.ones(self.batch_size, dtype=torch.long, device=self.device)
-        zeros = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
+        ones_label = torch.ones(self.batch_size, dtype=torch.long, device=self.device)
+        zeros_label = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
 
         out = False
         while not out:
@@ -102,35 +102,64 @@ class Solver(object):
                 self.global_iter += 1
                 self.pbar.update(1)
 
+                # -----------------------------
+                # 1) Forward passes (VAE + D)
+                # -----------------------------
                 x_true1 = x_true1.to(self.device)
+                x_true2 = x_true2.to(self.device)
+
+                # Forward VAE on x_true1
                 x_recon, mu, logvar, z = self.VAE(x_true1)
+
+                # Forward VAE on x_true2 (for permuted version)
+                z_prime = self.VAE(x_true2, no_dec=True)
+                z_pperm = permute_dims(z_prime)
+
+                # Compute VAE losses
                 vae_recon_loss = recon_loss(x_true1, x_recon)
-                vae_kld = kl_divergence(mu, logvar,self.r)
+                vae_kld = kl_divergence(mu, logvar, self.r)
                 H_r = entropy(self.r)
 
-                D_z = self.D(self.r*z)
+                # FactorVAE TC term: D_z for z from x_true1
+                D_z = self.D(self.r * z)
                 vae_tc_loss = (D_z[:, :1] - D_z[:, 1:]).mean()
 
-                vae_loss = vae_recon_loss + vae_kld + self.gamma*vae_tc_loss + self.etaS*self.r.abs().sum() + self.etaH*H_r
+                # Overall VAE loss
+                vae_loss = (
+                    vae_recon_loss
+                    + vae_kld
+                    + self.gamma * vae_tc_loss
+                    + self.etaS * self.r.abs().sum()
+                    + self.etaH * H_r
+                )
 
+                # Discriminator pass on real z and permuted z
+                D_z_pperm = self.D(self.r * z_pperm)
+                D_tc_loss = 0.5 * (
+                    F.cross_entropy(D_z, zeros_label)
+                    + F.cross_entropy(D_z_pperm, ones_label)
+                )
+
+                # ---------------------------------
+                # 2) Zero-out grads for *all* nets
+                # ---------------------------------
                 self.optim_VAE.zero_grad()
-                vae_loss.backward(retain_graph=True)
-                self.optim_VAE.step()
-
                 self.optim_r.zero_grad()
-                vae_loss.backward(retain_graph=True)
-                self.optim_r.step()
-
-                x_true2 = x_true2.to(self.device)
-                z_prime = self.VAE(x_true2, no_dec=True)
-                z_pperm = permute_dims(z_prime).detach()
-                D_z_pperm = self.D(self.r*z_pperm)
-                D_tc_loss = 0.5*(F.cross_entropy(D_z, zeros) + F.cross_entropy(D_z_pperm, ones))
-
                 self.optim_D.zero_grad()
-                D_tc_loss.backward()
-                self.optim_D.step()
 
+                # -------------------------------------------------------
+                # 3) Backward passes: first VAE loss, then D loss
+                #    (retain_graph=True so second backward can still use it)
+                # -------------------------------------------------------
+                vae_loss.backward(retain_graph=True)
+                D_tc_loss.backward()
+
+                # --------------------------------------
+                # 4) Finally update parameters altogether
+                # --------------------------------------
+                self.optim_VAE.step()
+                self.optim_r.step()
+                self.optim_D.step()
 
                 if self.global_iter%self.print_iter == 0:
                     self.pbar.write('[{}] vae_recon_loss:{:.3f} vae_kld:{:.3f} vae_tc_loss:{:.3f} D_tc_loss:{:.3f}'.format(
@@ -396,7 +425,6 @@ class Solver(object):
                          str(os.path.join(output_dir, key+'.gif')),output_dir,delay=10)
 
         self.net_mode(train=True)
-
 
     def net_mode(self, train):
         if not isinstance(train, bool):
