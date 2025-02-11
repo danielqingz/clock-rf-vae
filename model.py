@@ -2,6 +2,7 @@
 
 import torch.nn as nn
 import torch.nn.init as init
+import torch
 
 
 class Discriminator(nn.Module):
@@ -81,9 +82,9 @@ class RF_VAE1(nn.Module):
                 initializer(m)
 
     def reparametrize(self, mu, logvar):
-        std = logvar.mul(0.5).exp_()
-        eps = std.data.new(std.size()).normal_()
-        return eps.mul(std).add_(mu)
+        std = (0.5 * logvar).exp()  # no in-place
+        eps = torch.randn_like(std)  # recommended modern usage
+        return mu + eps * std  # no in-place
 
     def forward(self, x, no_dec=False):
         stats = self.encode(x)
