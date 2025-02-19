@@ -60,11 +60,15 @@ def return_data(args):
     batch_size = args.batch_size
     num_workers = args.num_workers
     image_size = args.image_size
-    assert image_size == 64, 'currently only image size of 64 is supported'
+    # assert image_size == 64, 'currently only image size of 64 is supported'
 
-    transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),])
+    transform = transforms.Compose(
+        [
+            transforms.Resize(256),  # Resize to larger square
+            transforms.CenterCrop(224),  # Crop to fixed 224x224
+            transforms.ToTensor(),
+        ]
+    )
 
     if name.lower() == 'celeba':
         root = os.path.join(dset_dir, 'img_align_celeba')
@@ -81,12 +85,11 @@ def return_data(args):
         train_kwargs = {'data_tensor':data}
         dset = CustomTensorDataset
     elif name.lower() == 'nhats':
-        root = os.path.join(dset_dir)
+        root = os.path.join(dset_dir, "NHATS")
         train_kwargs = {'root':root, 'transform':transform}
         dset = CustomImageFolder
     else:
         raise NotImplementedError
-
 
     train_data = dset(**train_kwargs)
     train_loader = DataLoader(train_data,

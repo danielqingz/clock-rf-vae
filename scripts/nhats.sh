@@ -1,0 +1,3 @@
+#! /bin/sh
+
+python main.py --dataset nhats --dset_dir data --cuda False --image_size 224 --num_workers 4 --batch_size 32 --output_save True --viz_on True --viz_ll_iter 100 --viz_la_iter 500 --viz_ra_iter 1000 --viz_ta_iter 1000 --ckpt_save_iter 10000 --max_iter 52000 --lr_VAE 1e-5 --beta1_VAE 0.9 --beta2_VAE 0.999 --lr_D 1e-5 --beta1_D 0.5 --beta2_D 0.9 --lr_r 1e-4 --beta1_r 0.5 --beta2_r 0.9 --name $1 --z_dim 10 --gamma 1.0 --ckpt_load last
