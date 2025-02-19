@@ -3,3 +3,7 @@
 data
 __pycache__
 local-dev.json
+outputs/post-training
+checkpoints
+outputs/*
+!outputs/NHATS

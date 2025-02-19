@@ -100,42 +100,63 @@ class RF_VAE1(nn.Module):
 
 
 class RF_VAE2(nn.Module):
-    """Encoder and Decoder architecture for 3D Shapes, Celeba, Chairs data."""
+    """Encoder and Decoder architecture for 224x224 images."""
+
     def __init__(self, z_dim=10):
         super(RF_VAE2, self).__init__()
         self.z_dim = z_dim
+
+        # Encoder (downsampling from 224x224 to latent space)
         self.encode = nn.Sequential(
-            nn.Conv2d(3, 32, 4, 2, 1),
+            nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1),  # 224 -> 112
             nn.ReLU(True),
-            nn.Conv2d(32, 32, 4, 2, 1),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # 112 -> 56
             nn.ReLU(True),
-            nn.Conv2d(32, 64, 4, 2, 1),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),  # 56 -> 28
             nn.ReLU(True),
-            nn.Conv2d(64, 64, 4, 2, 1),
+            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),  # 28 -> 14
             nn.ReLU(True),
-            nn.Conv2d(64, 256, 4, 1),
+            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),  # 14 -> 7
             nn.ReLU(True),
-            nn.Conv2d(256, 2*z_dim, 1)
+            nn.Conv2d(512, 1024, kernel_size=4, stride=2, padding=1),  # 7 -> 3
+            nn.ReLU(True),
+            nn.Conv2d(1024, 2 * z_dim, kernel_size=3),  # 3x3 -> 1x1 (Latent space)
         )
+
+        # Decoder (upsampling from latent space to 224x224)
         self.decode = nn.Sequential(
-            nn.Conv2d(z_dim, 256, 1),
+            # 1) z_dim -> 1024, kernel=3 => (1x1 -> 3x3)
+            nn.ConvTranspose2d(z_dim, 1024, kernel_size=3),
             nn.ReLU(True),
-            nn.ConvTranspose2d(256, 64, 4),
+            # 2) 1024 -> 512 => (3->7)
+            nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1, output_padding=1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(64, 64, 4, 2, 1),
+            # 3) 512 -> 256 => (7->14)
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(64, 32, 4, 2, 1),
+            # 4) 256 -> 128 => (14->28)
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(32, 32, 4, 2, 1),
+            # 5) 128 -> 64 => (28->56)
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(32, 3, 4, 2, 1),
+            # 6) 64 -> 32 => (56->112)
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(True),
+            # 7) 32 -> 16 => (112->224)  <-- Use kernel_size=4, stride=2, padding=1
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(True),
+            # 8) 16 -> 3 => (224->224) final
+            nn.ConvTranspose2d(16, 3, kernel_size=3, stride=1, padding=1),
+            nn.Tanh(),
         )
+
         self.weight_init()
 
-    def weight_init(self, mode='normal'):
-        if mode == 'kaiming':
+    def weight_init(self, mode="normal"):
+        if mode == "kaiming":
             initializer = kaiming_init
-        elif mode == 'normal':
+        elif mode == "normal":
             initializer = normal_init
 
         for block in self._modules:
@@ -144,13 +165,13 @@ class RF_VAE2(nn.Module):
 
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
-        eps = std.data.new(std.size()).normal_()
+        eps = torch.randn_like(std)  # Instead of .data.new(std.size()), better practice
         return eps.mul(std).add_(mu)
 
     def forward(self, x, no_dec=False):
         stats = self.encode(x)
-        mu = stats[:, :self.z_dim]
-        logvar = stats[:, self.z_dim:]
+        mu = stats[:, : self.z_dim]
+        logvar = stats[:, self.z_dim :]
         z = self.reparametrize(mu, logvar)
 
         if no_dec:
@@ -162,6 +183,7 @@ class RF_VAE2(nn.Module):
 
 class FactorVAE3(nn.Module):
     """Encoder and Decoder architecture for 3D Faces data."""
+
     def __init__(self, z_dim=10):
         super(FactorVAE3, self).__init__()
         self.z_dim = z_dim
@@ -176,7 +198,7 @@ class FactorVAE3(nn.Module):
             nn.ReLU(True),
             nn.Conv2d(64, 256, 4, 1),
             nn.ReLU(True),
-            nn.Conv2d(256, 2*z_dim, 1)
+            nn.Conv2d(256, 2 * z_dim, 1),
         )
         self.decode = nn.Sequential(
             nn.Conv2d(z_dim, 256, 1),
@@ -193,10 +215,10 @@ class FactorVAE3(nn.Module):
         )
         self.weight_init()
 
-    def weight_init(self, mode='normal'):
-        if mode == 'kaiming':
+    def weight_init(self, mode="normal"):
+        if mode == "kaiming":
             initializer = kaiming_init
-        elif mode == 'normal':
+        elif mode == "normal":
             initializer = normal_init
 
         for block in self._modules:
@@ -210,8 +232,8 @@ class FactorVAE3(nn.Module):
 
     def forward(self, x, no_dec=False):
         stats = self.encode(x)
-        mu = stats[:, :self.z_dim]
-        logvar = stats[:, self.z_dim:]
+        mu = stats[:, : self.z_dim]
+        logvar = stats[:, self.z_dim :]
         z = self.reparametrize(mu, logvar)
 
         if no_dec:

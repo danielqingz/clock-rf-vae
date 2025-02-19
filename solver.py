@@ -2,6 +2,7 @@
 
 import os
 import visdom
+import csv
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -13,6 +14,8 @@ from utils import DataGather, mkdirs, grid2gif
 from ops import recon_loss, kl_divergence, permute_dims, entropy
 from model import RF_VAE1, RF_VAE2, Discriminator
 from dataset import return_data
+
+import matplotlib.pyplot as plt
 
 
 class Solver(object):
@@ -161,9 +164,17 @@ class Solver(object):
                 self.optim_r.step()
                 self.optim_D.step()
 
+                # 5) Clamp r to [1e-6, 1.0 - 1e-6] so r.log() won't blow up
+                with torch.no_grad():
+                    self.r.clamp_(1e-6, 1.0 - 1e-6)
+
                 if self.global_iter%self.print_iter == 0:
                     self.pbar.write('[{}] vae_recon_loss:{:.3f} vae_kld:{:.3f} vae_tc_loss:{:.3f} D_tc_loss:{:.3f}'.format(
                         self.global_iter, vae_recon_loss.item(), vae_kld.item(), vae_tc_loss.item(), D_tc_loss.item()))
+
+                # 9) ✅ Save reconstruction images every 500 iterations
+                if self.global_iter % 500 == 0:
+                    self.check_reconstruction(num_samples=8, outdir="recons")
 
                 if self.global_iter%self.ckpt_save_iter == 0:
                     self.save_checkpoint(self.global_iter)
@@ -203,6 +214,125 @@ class Solver(object):
 
         self.pbar.write("[Training Finished]")
         self.pbar.close()
+
+    # def train(self):
+    #     self.net_mode(train=True)
+
+    #     out = False
+    #     while not out:
+    #         for x_data in self.data_loader:
+    #             # If your dataset returns pairs x_true1,x_true2, just keep x_true1
+    #             # or combine them. We'll assume "x_data" is your real batch of images.
+    #             if isinstance(x_data, (tuple, list)):
+    #                 x_data = x_data[0]
+
+    #             self.global_iter += 1
+    #             self.pbar.update(1)
+
+    #             # Move input to device
+    #             x_data = x_data.to(self.device)
+
+    #             # -----------------------------
+    #             # 1) Forward pass of the VAE
+    #             # -----------------------------
+    #             # If your VAE returns (x_recon, mu, logvar, z), do:
+    #             x_recon, mu, logvar, z = self.VAE(x_data)
+
+    #             # Reconstruction loss (binary cross-entropy w/ logits)
+    #             vae_recon_loss = recon_loss(x_data, x_recon)
+
+    #             # KL divergence
+    #             # Instead of kl_divergence(mu, logvar, self.r),
+    #             # just do standard kl_divergence without r
+    #             # (You can define a simple kl_divergence function
+    #             # that doesn't depend on r.)
+    #             vae_kld = -0.5 * torch.sum(1 + logvar - mu**2 - logvar.exp(), dim=1)
+    #             vae_kld = vae_kld.mean()
+
+    #             # Combined VAE loss = recon + KL
+    #             vae_loss = vae_recon_loss + vae_kld
+
+    #             # --------------------------
+    #             # 2) Optimize the VAE alone
+    #             # --------------------------
+    #             self.optim_VAE.zero_grad()
+    #             vae_loss.backward()
+    #             self.optim_VAE.step()
+
+    #             # Print or log as you like
+    #             if self.global_iter % self.print_iter == 0:
+    #                 self.pbar.write(
+    #                     f"[{self.global_iter}] recon: {vae_recon_loss.item():.3f} "
+    #                     f"KL: {vae_kld.item():.3f}"
+    #                 )
+
+    #             # Optionally save checkpoints or do visualizations
+    #             if self.global_iter % self.ckpt_save_iter == 0:
+    #                 # Just VAE checkpoint
+    #                 self.save_checkpoint(self.global_iter)
+
+    #             if self.global_iter >= self.max_iter:
+    #                 out = True
+    #                 break
+
+    #     self.pbar.write("[Training Finished]")
+    #     self.pbar.close()
+
+    def check_reconstruction(self, num_samples=8, outdir="recons"):
+        """
+        Sample a small batch from the dataloader, run it through the VAE,
+        and save original vs. reconstructed images with unique filenames.
+        """
+        # 1) Switch to eval mode
+        self.net_mode(train=False)
+
+        # 2) Grab a mini-batch from DataLoader
+        x_true1, _ = next(iter(self.data_loader))
+        x_true1 = x_true1.to(self.device)
+
+        # 3) Run through VAE
+        with torch.no_grad():
+            x_recon, mu, logvar, z = self.VAE(x_true1)
+            x_recon = torch.sigmoid(x_recon)  # Ensure pixel values are in [0,1]
+
+        # 4) Select a subset for saving
+        x_true1 = x_true1[:num_samples]
+        x_recon = x_recon[:num_samples]
+
+        # 5) Create output directory with unique subfolder per iteration
+        iter_dir = os.path.join(outdir, f"iter_{self.global_iter}")
+        os.makedirs(iter_dir, exist_ok=True)
+
+        # 6) Create grid images
+        true_grid = make_grid(x_true1, nrow=num_samples, normalize=True)
+        recon_grid = make_grid(x_recon, nrow=num_samples, normalize=True)
+
+        # 7) Save images with unique names
+        save_image(true_grid, os.path.join(iter_dir, f"true_images_{self.global_iter}.png"))
+        save_image(
+            recon_grid, os.path.join(iter_dir, f"recon_images_{self.global_iter}.png")
+        )
+
+        # 8) Save side-by-side comparison using matplotlib
+        fig, axes = plt.subplots(1, 2, figsize=(num_samples * 2, 4))
+
+        axes[0].imshow(true_grid.permute(1, 2, 0).cpu().numpy(), cmap="gray")
+        axes[0].set_title("Original")
+        axes[0].axis("off")
+
+        axes[1].imshow(recon_grid.permute(1, 2, 0).cpu().numpy(), cmap="gray")
+        axes[1].set_title("Reconstructed")
+        axes[1].axis("off")
+
+        # Save the figure and close it
+        comparison_path = os.path.join(iter_dir, f"comparison_{self.global_iter}.png")
+        plt.savefig(comparison_path)
+        plt.close(fig)
+
+        print(f"Reconstruction images saved in '{iter_dir}'")
+
+        # 9) Switch back to train mode
+        self.net_mode(train=True)
 
     def visualize_recon(self):
         data = self.image_gather.data
@@ -417,7 +547,7 @@ class Solver(object):
             for i, key in enumerate(Z.keys()):
                 for j, val in enumerate(interpolation):
                     save_image(tensor=gifs[i][j].cpu(),
-                               filename=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
+                               fp=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
                                nrow=self.z_dim, pad_value=1)
                     name_str = name_str + '{}_{}.jpg '.format(key, j)
 
